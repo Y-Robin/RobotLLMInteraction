@@ -3,45 +3,42 @@ import socket
 robot_ip = "192.168.25.3"  # IP deines Roboters
 robot_port = 30002         # URScript-Port
 
-# 🔹 Ziel-TCP-Pose (zuvor mit get_actual_tcp_pose() erfasst)
-pose_target = [0.430477, -0.154308, 0.276892, 0.4654, 3.060047, -0.087519]
-pose_target = [0.442668, 0.11412, 0.270919, -0.254055, 3.086944, -0.038854]
-pose_str = "[" + ", ".join([str(x) for x in pose_target]) + "]"
+# Zwei Ziel-TCP-Punkte
+pose_a = [0.430477, -0.154308, 0.276892,  0.4654, 3.060047, -0.087519]
+pose_b = [0.442668,  0.11412,  0.270919, -0.254055, 3.086944, -0.038854]
 
-# 🔹 Sichere Zwischenposition (angepasst an UR3: Arm nach oben gefaltet)
-safe_q = [0.0, -1.57, 1.57, 0.0, 1.57, 0.0]
+# Auswahl
+wahl = input("Welche Position anfahren? (A/B): ").strip().upper()
+pose_target = pose_a if wahl == "A" else pose_b
+pose_str = "[" + ", ".join([str(x) for x in pose_target]) + "]"
 
 # Dynamikparameter
 acceleration = 1.2
-velocity = 1.0
-blend_radius = 0.0
+velocity = 1.5
+blend_radius = 0.01
 
-# 🔹 URScript: vollständig auf Roboter ausführbar
+# URScript: schnelle direkte Bewegung mit movej
 ur_script = f"""
-def safe_move_to_pose():
-  set_tcp(p[0,0,0,0,0,0])  # TCP auf neutral setzen, damit Pose stimmt
+def move_to_pose_direct():
+  set_tcp(p[0,0,0,0,0,0])  # TCP neutral
 
-  # 1. In sichere Zwischenposition fahren
-  movej({safe_q}, a={acceleration}, v={velocity})
-  sync()
-
-  # 2. Zielpose setzen und Gelenkwinkel berechnen
   target_pose = p{pose_str}
   qnear = get_actual_joint_positions()
+
   if get_inverse_kin_has_solution(target_pose, qnear):
     q = get_inverse_kin(target_pose, qnear)
     movej(q, a={acceleration}, v={velocity}, r={blend_radius})
     textmsg("Zielpose erreicht.")
   else:
-    textmsg("Fehler: Keine IK-Lösung für Zielpose.")
+    textmsg("IK fehlgeschlagen.")
   end
 end
-safe_move_to_pose()
+move_to_pose_direct()
 """
 
-# 🔹 Senden des Skripts an den Roboter
+# Senden an den Roboter
 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
     s.connect((robot_ip, robot_port))
     s.sendall(ur_script.encode())
-    print("URScript gesendet:")
+    print(f"URScript gesendet für Position {wahl}")
     print(ur_script)
