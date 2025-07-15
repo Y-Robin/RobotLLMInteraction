@@ -3,6 +3,7 @@ from gripper_control import gripper_open, gripper_close
 from robot_teaching import teach_positions
 from moveFun import send_pose_to_robot
 import time
+from stopRobot import stop_robot
 
 # Erfasse z. B. 3 Posen vom Benutzer per Freedrive
 positionen = teach_positions(num_positions=2)
@@ -25,9 +26,9 @@ for _ in range(1):
 print("Öffne Greifer...")
 gripper_open()
 
-# ggf. Wartezeit einfügen
-import time
 time.sleep(2)
 
 print("Schließe Greifer...")
 gripper_close()
+
+stop_robot()
