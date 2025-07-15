@@ -32,7 +32,8 @@ def build_system_prompt(memory, last_script=""):
     return (
         "Du bist ein Assistenzsystem, das Sprachbefehle in ausführbaren Python-Code für die Steuerung eines Roboters umwandelt.\n\n"
         "Regeln:\n"
-        "- Antworte ausschließlich mit ausführbarem Python-Code, ohne Kommentare oder Erklärungen.\n"
+        "- Only the code without anything else no commends no ``` python no nothing. Only imports and code!!\n"
+        "- Antworte ausschließlich mit ausführbarem Python-Code, ohne Kommentare oder Erklärungen. und ohne ```python. Nur der Code!!!s\n"
         "- Benutze nur die bereitgestellten Funktionen: send_pose_to_robot(), gripper_open(), gripper_close(), teach_positions(), stop_robot(), usw.\n"
         "- Wenn du im Code eine neue Variable erzeugst, schreibe diese am Ende explizit in das Python-Dictionary MEMORY, z.B. MEMORY['meine_variable'] = meine_variable.\n"
         "- Verwende Variablen aus MEMORY für Folgeanweisungen, z.B. fahre zu MEMORY['positionen'][0].\n"
@@ -109,7 +110,7 @@ def generiere_code(prompt_text, memory, last_script=""):
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt_text},
         ],
-        temperature=0.1,
+        temperature=0,
     )
     code = response.choices[0].message.content
     return code.strip()
@@ -168,6 +169,7 @@ def main_loop():
             running_code_thread.start()
             # Warte, damit Taste nicht mehrfach erkannt wird
             time.sleep(1.2)
+            print("Drücke 's' für Spracheingabe (Start/Stop mit SPACE), 'q' zum Beenden.")
 
         elif keyboard.is_pressed("q"):
             print("🏁 Beende...")

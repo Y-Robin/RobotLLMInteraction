@@ -1,5 +1,6 @@
 import socket
 import time
+import tkinter as tk
 
 ROBOT_IP = "192.168.25.3"
 PC_IP = "192.168.25.2"
@@ -13,6 +14,29 @@ def send_urscript(script):
         s.connect((ROBOT_IP, ROBOT_PORT_SEND))
         s.sendall(script.encode())
         s.recv(1024)
+
+def wait_for_save_gui(position_num):
+    """
+    Öffnet ein kleines Fenster, das anzeigt:
+    'Position {position_num}: Bewege Roboter und drücke Speichern'
+    Das Fenster schließt sich automatisch nach Klick.
+    """
+    done = []
+
+    def on_save():
+        done.append(True)
+        root.destroy()
+
+    root = tk.Tk()
+    root.title(f"Position {position_num} speichern")
+    root.geometry("300x100")
+    label = tk.Label(root, text=f"📍 Position {position_num}:\nRoboter bewegen, dann Speichern drücken.")
+    label.pack(pady=10)
+    btn = tk.Button(root, text="Speichern", command=on_save, font=("Arial", 14))
+    btn.pack(pady=5)
+    # Fenster immer im Vordergrund
+    root.attributes("-topmost", True)
+    root.mainloop()
 
 def teach_positions(num_positions):
     poses = []
@@ -33,7 +57,6 @@ def teach_positions(num_positions):
     print("✅ Server-Sockets offen. Starte Roboter-Skript in 2 Sekunden...")
     time.sleep(2)  # Sicherheitspuffer
 
-    # Roboter-Skript wie oben
     ur_script = f"""
 def teach_loop():
   textmsg("Freedrive aktiviert")
@@ -55,9 +78,9 @@ def teach_loop():
       textmsg("Pose gesendet")
       socket_send_string(to_str(pose), "pose_socket")
       count = count + 1
-    end          # ← schließt das IF
+    end
     sync()
-  end            # ← schließt die WHILE
+  end
 
   end_freedrive_mode()
   socket_close("pose_socket")
@@ -66,7 +89,6 @@ def teach_loop():
 end
 teach_loop()
 """
-
 
     send_urscript(ur_script)
 
@@ -77,7 +99,7 @@ teach_loop()
 
     with trigger_conn, pose_conn:
         for i in range(num_positions):
-            input(f"📍 Position {i+1}: Bewege Roboter, dann [Enter] drücken...")
+            wait_for_save_gui(i+1)  # GUI statt input()
             trigger_conn.send(bytes([1]))  # Triggersignal senden
 
             print("⏳ Warte auf Pose vom Roboter...")
