@@ -1,0 +1,175 @@
+import os
+from dotenv import load_dotenv
+from openai import OpenAI
+import sounddevice as sd
+import numpy as np
+import scipy.io.wavfile
+import keyboard
+import threading
+import queue
+import time
+
+# Roboter-Module importieren!
+from stopRobot import stop_robot
+from gripper_control import gripper_open, gripper_close
+from moveFun import send_pose_to_robot
+from robot_teaching import teach_positions
+
+# OpenAI API-Key laden
+load_dotenv()
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+AUDIO_FILE = "befehl.wav"
+SAMPLERATE = 16000
+
+MEMORY = {}
+result_queue = queue.Queue()
+running_code_thread = None
+stop_event = threading.Event()
+
+def build_system_prompt(memory):
+    return (
+        "Du bist ein Assistenzsystem, das Sprachbefehle in ausführbaren Python-Code für die Steuerung eines Roboters umwandelt.\n\n"
+        "Regeln:\n"
+        "- Antworte ausschließlich mit ausführbarem Python-Code, ohne Kommentare oder Erklärungen.\n"
+        "- Benutze nur die bereitgestellten Funktionen: send_pose_to_robot(), gripper_open(), gripper_close(), teach_positions(), stop_robot(), usw.\n"
+        "- Wenn du im Code eine neue Variable erzeugst, schreibe diese am Ende explizit in das Python-Dictionary MEMORY, z.B. MEMORY['meine_variable'] = meine_variable.\n"
+        "- Verwende Variablen aus MEMORY für Folgeanweisungen, z.B. fahre zu MEMORY['positionen'][0].\n"
+        "- Wenn du eine lokale Variable (z.B. Ergebnis einer Berechnung oder Rückgabe einer Funktion) erzeugst, schreibe sie ebenfalls explizit ins MEMORY, falls sie später wiederverwendet werden könnte. Beispiel: ergebnis = irgendwas(); MEMORY['ergebnis'] = ergebnis\n"
+        "- Prüfe in jeder Schleife oder langen Aktion regelmäßig, ob stop_event.is_set() == True ist. Falls ja, stoppe sofort mit stop_robot() und return.\n"
+        "- Wenn eine Variable wie 'positionen' schon existiert, nutze diese weiter.\n"
+        "\nBeispiel (One-Shot mit korrektem Abbruch):\n"
+        "from gripper_control import gripper_open, gripper_close\n"
+        "from robot_teaching import teach_positions\n"
+        "from moveFun import send_pose_to_robot\n"
+        "import time\n"
+        "from stopRobot import stop_robot\n"
+        "positionen = teach_positions(num_positions=2)\n"
+        "for pose in positionen:\n"
+        "    if stop_event.is_set():\n"
+        "        stop_robot()\n"
+        "        return\n"
+        "    send_pose_to_robot(pose, acceleration=0.8, velocity=1.2)\n"
+        "gripper_open()\n"
+        "import time; time.sleep(2)\n"
+        "gripper_close()\n"
+        "stop_robot()\n"
+        "MEMORY['positionen'] = positionen\n\n"
+        "Beispiel lokale Variable speichern:\n"
+        "winkel = 42\n"
+        "MEMORY['winkel'] = winkel\n\n"
+        f"Bekannte Variablen (MEMORY):\n{repr(memory)}"
+    )
+
+def record_audio_with_keypress(filename=AUDIO_FILE, stop_key="space"):
+    print(f"Drücke '{stop_key}' zum Starten der Aufnahme...")
+    while True:
+        if keyboard.is_pressed(stop_key):
+            print(f"🎙️ Aufnahme läuft... (erneut '{stop_key}' drücken zum Stoppen)")
+            while keyboard.is_pressed(stop_key):
+                time.sleep(0.05)
+            break
+        time.sleep(0.05)
+
+    recording = []
+    stream = sd.InputStream(samplerate=SAMPLERATE, channels=1)
+    stream.start()
+    try:
+        while True:
+            data, _ = stream.read(1024)
+            recording.append(data.copy())
+            if keyboard.is_pressed(stop_key):
+                print("🛑 Aufnahme gestoppt.")
+                while keyboard.is_pressed(stop_key):
+                    time.sleep(0.05)
+                break
+    finally:
+        stream.stop()
+        stream.close()
+    audio_np = np.concatenate(recording, axis=0)
+    scipy.io.wavfile.write(filename, SAMPLERATE, np.int16(audio_np * 32767))
+    print("✅ Aufnahme gespeichert.")
+
+def transkribiere_audio(filename=AUDIO_FILE):
+    print("📝 Transkribiere mit Whisper (OpenAI)...")
+    with open(filename, "rb") as f:
+        response = client.audio.transcriptions.create(model="whisper-1", file=f)
+    return response.text
+
+def generiere_code(prompt_text, memory):
+    print(f"🧠 Sende an GPT: {prompt_text}")
+    system_prompt = build_system_prompt(memory)
+    response = client.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt_text},
+        ],
+        temperature=0.1,
+    )
+    code = response.choices[0].message.content
+    return code.strip()
+
+def stop_robot_and_code():
+    global running_code_thread
+    stop_event.set()
+    stop_robot()
+    if running_code_thread and running_code_thread.is_alive():
+        print("⏹️ Beende laufenden Code-Thread...")
+        running_code_thread.join(timeout=2)
+        running_code_thread = None
+
+def run_code(code, result_queue, memory):
+    local_vars = {"MEMORY": memory, "stop_event": stop_event}
+    try:
+        exec(code, globals(), local_vars)
+        result_queue.put(local_vars)
+    except Exception as e:
+        result_queue.put({'_error': str(e)})
+
+def update_memory_from_locals(local_vars, memory):
+    for k, v in local_vars.items():
+        if not k.startswith("_") and k not in ("MEMORY", "stop_event"):
+            memory[k] = v
+
+def main_loop():
+    global running_code_thread
+    print("Drücke 's' für Spracheingabe (Start/Stop mit SPACE), 'q' zum Beenden.")
+    while True:
+        # Wenn Thread fertig ist, speichere Rückgabe in MEMORY!
+        if running_code_thread and not running_code_thread.is_alive():
+            try:
+                local_vars = result_queue.get_nowait()
+                if "_error" in local_vars:
+                    print("❌ Fehler beim Ausführen:", local_vars["_error"])
+                else:
+                    update_memory_from_locals(local_vars, MEMORY)
+                    print("✅ MEMORY wurde aktualisiert:", MEMORY)
+            except queue.Empty:
+                pass
+            running_code_thread = None  # Thread ist fertig
+
+        if keyboard.is_pressed("s"):
+            print("\n[🎤 Sprachaufnahme]")
+            stop_robot_and_code()  # Aktive Bewegung und Thread beenden!
+            record_audio_with_keypress()
+            text = transkribiere_audio()
+            print(f"📜 Transkribierter Text: {text}")
+            code = generiere_code(text, MEMORY)
+            print("▶️ Führe Code aus:")
+            print(code)
+            stop_event.clear()
+            running_code_thread = threading.Thread(target=run_code, args=(code, result_queue, MEMORY.copy()))
+            running_code_thread.start()
+            # Warte, damit Taste nicht mehrfach erkannt wird
+            time.sleep(1.2)
+
+        elif keyboard.is_pressed("q"):
+            print("🏁 Beende...")
+            stop_robot_and_code()
+            break
+
+        time.sleep(0.1)
+
+if __name__ == "__main__":
+    main_loop()
