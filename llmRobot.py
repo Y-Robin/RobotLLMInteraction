@@ -26,8 +26,9 @@ MEMORY = {}
 result_queue = queue.Queue()
 running_code_thread = None
 stop_event = threading.Event()
+LAST_SCRIPT = ""  # Hier speichern wir das letzte ausgeführte Skript
 
-def build_system_prompt(memory):
+def build_system_prompt(memory, last_script=""):
     return (
         "Du bist ein Assistenzsystem, das Sprachbefehle in ausführbaren Python-Code für die Steuerung eines Roboters umwandelt.\n\n"
         "Regeln:\n"
@@ -55,10 +56,13 @@ def build_system_prompt(memory):
         "gripper_close()\n"
         "stop_robot()\n"
         "MEMORY['positionen'] = positionen\n\n"
-        "Beispiel lokale Variable speichern:\n"
-        "winkel = 42\n"
-        "MEMORY['winkel'] = winkel\n\n"
-        f"Bekannte Variablen (MEMORY):\n{repr(memory)}"
+        "Bspeiel Positionen:\n"
+        "positionen = [\n"
+        "   [0.1, -0.5, 0.35, 3.14, -0.1, 0.02],\n"
+        "   [0.12, -0.51, 0.34, 3.13, -0.11, 0.021]\n"
+        "]\n"
+        + (f"\n\nLetztes ausgeführtes Skript:\n{last_script.strip()}" if last_script else "")
+        + f"\n\nBekannte Variablen (MEMORY):\n{repr(memory)}"
     )
 
 def record_audio_with_keypress(filename=AUDIO_FILE, stop_key="space"):
@@ -96,9 +100,9 @@ def transkribiere_audio(filename=AUDIO_FILE):
         response = client.audio.transcriptions.create(model="whisper-1", file=f)
     return response.text
 
-def generiere_code(prompt_text, memory):
+def generiere_code(prompt_text, memory, last_script=""):
     print(f"🧠 Sende an GPT: {prompt_text}")
-    system_prompt = build_system_prompt(memory)
+    system_prompt = build_system_prompt(memory, last_script)
     response = client.chat.completions.create(
         model="gpt-4o",
         messages=[
@@ -133,7 +137,7 @@ def update_memory_from_locals(local_vars, memory):
             memory[k] = v
 
 def main_loop():
-    global running_code_thread
+    global running_code_thread, LAST_SCRIPT
     print("Drücke 's' für Spracheingabe (Start/Stop mit SPACE), 'q' zum Beenden.")
     while True:
         # Wenn Thread fertig ist, speichere Rückgabe in MEMORY!
@@ -155,9 +159,10 @@ def main_loop():
             record_audio_with_keypress()
             text = transkribiere_audio()
             print(f"📜 Transkribierter Text: {text}")
-            code = generiere_code(text, MEMORY)
+            code = generiere_code(text, MEMORY, LAST_SCRIPT)
             print("▶️ Führe Code aus:")
             print(code)
+            LAST_SCRIPT = code  # Merke das letzte Skript für Prompt!
             stop_event.clear()
             running_code_thread = threading.Thread(target=run_code, args=(code, result_queue, MEMORY.copy()))
             running_code_thread.start()
