@@ -27,8 +27,9 @@ result_queue = queue.Queue()
 running_code_thread = None
 stop_event = threading.Event()
 LAST_SCRIPT = ""  # Hier speichern wir das letzte ausgeführte Skript
+EXTRA_PROMPT = ""  # Hier stehen die Zusatzinfos aus 'p'
 
-def build_system_prompt(memory, last_script=""):
+def build_system_prompt(memory, last_script="", extra_prompt=""):
     return (
         "Du bist ein Assistenzsystem, das Sprachbefehle in ausführbaren Python-Code für die Steuerung eines Roboters umwandelt.\n\n"
         "Regeln:\n"
@@ -67,7 +68,8 @@ def build_system_prompt(memory, last_script=""):
         "positionen = [\n"
         "   [0.1, -0.5, 0.35, 3.14, -0.1, 0.02],\n"
         "   [0.12, -0.51, 0.34, 3.13, -0.11, 0.021]\n"
-        "]\n"
+        "]"
+        + (f"\n\nZusatzinfo: {extra_prompt.strip()}" if extra_prompt else "")
         + (f"\n\nLetztes ausgeführtes Skript:\n{last_script.strip()}" if last_script else "")
         + f"\n\nBekannte Variablen (MEMORY):\n{repr(memory)}"
     )
@@ -111,9 +113,9 @@ def transkribiere_audio(filename=AUDIO_FILE):
         )
     return response.text
 
-def generiere_code(prompt_text, memory, last_script=""):
+def generiere_code(prompt_text, memory, last_script="", extra_prompt=""):
     print(f"🧠 Sende an GPT: {prompt_text}")
-    system_prompt = build_system_prompt(memory, last_script)
+    system_prompt = build_system_prompt(memory, last_script, extra_prompt)
     response = client.chat.completions.create(
         model="gpt-4.1-mini",
         messages=[
@@ -155,8 +157,8 @@ def update_memory_from_locals(local_vars, memory):
             memory[k] = v
 
 def main_loop():
-    global running_code_thread, LAST_SCRIPT
-    print("Drücke 's' für Spracheingabe (Start/Stop mit SPACE), 'q' zum Beenden.")
+    global running_code_thread, LAST_SCRIPT, EXTRA_PROMPT
+    print("Drücke 's' für Spracheingabe (Start/Stop mit SPACE), 'p' für Zusatzinfos, 'q' zum Beenden.")
     while True:
         # Wenn Thread fertig ist, speichere Rückgabe in MEMORY!
         if running_code_thread and not running_code_thread.is_alive():
@@ -177,7 +179,7 @@ def main_loop():
             record_audio_with_keypress()
             text = transkribiere_audio()
             print(f"📜 Transkribierter Text: {text}")
-            code = generiere_code(text, MEMORY, LAST_SCRIPT)
+            code = generiere_code(text, MEMORY, LAST_SCRIPT, EXTRA_PROMPT)
             print("▶️ Führe Code aus:")
             print(code)
             LAST_SCRIPT = code  # Merke das letzte Skript für Prompt!
@@ -186,7 +188,22 @@ def main_loop():
             running_code_thread.start()
             # Warte, damit Taste nicht mehrfach erkannt wird
             time.sleep(1.2)
-            print("Drücke 's' für Spracheingabe (Start/Stop mit SPACE), 'q' zum Beenden.")
+            print("Drücke 's' für Spracheingabe (Start/Stop mit SPACE), 'p' für Zusatzinfos, 'q' zum Beenden.")
+
+        elif keyboard.is_pressed("p"):
+            print("\n[🎤 Zusatzinfo aufnehmen] (Start/Stop mit SPACE)")
+            record_audio_with_keypress()
+            extra_text = transkribiere_audio()
+            if extra_text.strip():
+                # Füge den neuen Text an, mit Zeilenumbruch falls nötig
+                if EXTRA_PROMPT:
+                    EXTRA_PROMPT += "\n"
+                EXTRA_PROMPT += extra_text.strip()
+                print(f"🔖 Zusatzinfo aktualisiert:\n{EXTRA_PROMPT}")
+            else:
+                print("❗ Keine Zusatzinfo erkannt.")
+            time.sleep(1.2)
+            print("Drücke 's' für Spracheingabe (Start/Stop mit SPACE), 'p' für Zusatzinfos, 'q' zum Beenden.")
 
         elif keyboard.is_pressed("q"):
             print("🏁 Beende...")
