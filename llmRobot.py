@@ -158,7 +158,7 @@ def update_memory_from_locals(local_vars, memory):
 
 def main_loop():
     global running_code_thread, LAST_SCRIPT, EXTRA_PROMPT
-    print("Drücke 's' für Spracheingabe (Start/Stop mit SPACE), 'p' für Zusatzinfos, 'q' zum Beenden.")
+    print("Drücke 's' für Spracheingabe, 't' für Texteingabe, 'p' für Zusatzinfo per Sprache, 'u' für Zusatzinfo per Text, 'q' zum Beenden.")
     while True:
         # Wenn Thread fertig ist, speichere Rückgabe in MEMORY!
         if running_code_thread and not running_code_thread.is_alive():
@@ -175,27 +175,42 @@ def main_loop():
 
         if keyboard.is_pressed("s"):
             print("\n[🎤 Sprachaufnahme]")
-            stop_robot_and_code()  # Aktive Bewegung und Thread beenden!
+            stop_robot_and_code()
             record_audio_with_keypress()
             text = transkribiere_audio()
             print(f"📜 Transkribierter Text: {text}")
             code = generiere_code(text, MEMORY, LAST_SCRIPT, EXTRA_PROMPT)
             print("▶️ Führe Code aus:")
             print(code)
-            LAST_SCRIPT = code  # Merke das letzte Skript für Prompt!
+            LAST_SCRIPT = code
             stop_event.clear()
             running_code_thread = threading.Thread(target=run_code, args=(code, result_queue, MEMORY.copy()))
             running_code_thread.start()
-            # Warte, damit Taste nicht mehrfach erkannt wird
             time.sleep(1.2)
-            print("Drücke 's' für Spracheingabe (Start/Stop mit SPACE), 'p' für Zusatzinfos, 'q' zum Beenden.")
+            print("Drücke 's' für Spracheingabe, 't' für Texteingabe, 'p' für Zusatzinfo per Sprache, 'u' für Zusatzinfo per Text, 'q' zum Beenden.")
+
+        elif keyboard.is_pressed("t"):
+            print("\n[⌨️  Texteingabe]")
+            stop_robot_and_code()
+            text = input("Gib deinen Befehl ein: ")
+            if not text.strip():
+                print("❗ Kein Text eingegeben.")
+            else:
+                code = generiere_code(text, MEMORY, LAST_SCRIPT, EXTRA_PROMPT)
+                print("▶️ Führe Code aus:")
+                print(code)
+                LAST_SCRIPT = code
+                stop_event.clear()
+                running_code_thread = threading.Thread(target=run_code, args=(code, result_queue, MEMORY.copy()))
+                running_code_thread.start()
+            time.sleep(1.2)
+            print("Drücke 's' für Spracheingabe, 't' für Texteingabe, 'p' für Zusatzinfo per Sprache, 'u' für Zusatzinfo per Text, 'q' zum Beenden.")
 
         elif keyboard.is_pressed("p"):
             print("\n[🎤 Zusatzinfo aufnehmen] (Start/Stop mit SPACE)")
             record_audio_with_keypress()
             extra_text = transkribiere_audio()
             if extra_text.strip():
-                # Füge den neuen Text an, mit Zeilenumbruch falls nötig
                 if EXTRA_PROMPT:
                     EXTRA_PROMPT += "\n"
                 EXTRA_PROMPT += extra_text.strip()
@@ -203,7 +218,20 @@ def main_loop():
             else:
                 print("❗ Keine Zusatzinfo erkannt.")
             time.sleep(1.2)
-            print("Drücke 's' für Spracheingabe (Start/Stop mit SPACE), 'p' für Zusatzinfos, 'q' zum Beenden.")
+            print("Drücke 's' für Spracheingabe, 't' für Texteingabe, 'p' für Zusatzinfo per Sprache, 'u' für Zusatzinfo per Text, 'q' zum Beenden.")
+
+        elif keyboard.is_pressed("u"):
+            print("\n[⌨️  Zusatzinfo per Texteingabe]")
+            extra_text = input("Gib Zusatzinfo für den Prompt ein: ")
+            if extra_text.strip():
+                if EXTRA_PROMPT:
+                    EXTRA_PROMPT += "\n"
+                EXTRA_PROMPT += extra_text.strip()
+                print(f"🔖 Zusatzinfo aktualisiert:\n{EXTRA_PROMPT}")
+            else:
+                print("❗ Keine Zusatzinfo erkannt.")
+            time.sleep(1.2)
+            print("Drücke 's' für Spracheingabe, 't' für Texteingabe, 'p' für Zusatzinfo per Sprache, 'u' für Zusatzinfo per Text, 'q' zum Beenden.")
 
         elif keyboard.is_pressed("q"):
             print("🏁 Beende...")
@@ -214,3 +242,4 @@ def main_loop():
 
 if __name__ == "__main__":
     main_loop()
+
