@@ -1,4 +1,5 @@
 import socket
+import time
 
 def run_urp_program(program_name: str, robot_ip: str = "192.168.25.3", dashboard_port: int = 29999):
     """
@@ -22,6 +23,7 @@ def run_urp_program(program_name: str, robot_ip: str = "192.168.25.3", dashboard
             s.sendall(b'play\n')
             response_play = s.recv(1024).decode().strip()
             print(f"[Dashboard] Play response: {response_play}")
+            time.sleep(2)
 
     except Exception as e:
         print(f"[Error] Failed to run program '{program_name}': {e}")
