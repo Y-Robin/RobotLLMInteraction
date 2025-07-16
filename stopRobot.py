@@ -12,4 +12,4 @@ stopRobot()
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.connect((robot_ip, robot_port))
         s.sendall(ur_script.encode())
-        print(ur_script)
+        #print(ur_script)

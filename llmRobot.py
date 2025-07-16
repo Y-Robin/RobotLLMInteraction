@@ -35,29 +35,29 @@ def build_system_prompt(memory, last_script=""):
         "- Only the code without anything else no commends no ``` python no nothing. Only imports and code!!\n"
         "- Antworte ausschließlich mit ausführbarem Python-Code, ohne Kommentare oder Erklärungen. und ohne ```python. Nur der Code!!!s\n"
         "- Benutze nur die bereitgestellten Funktionen: send_pose_to_robot(), gripper_open(), gripper_close(), teach_positions(), stop_robot(), usw.\n"
-        "- Wenn du im Code eine neue Variable erzeugst, schreibe diese am Ende explizit in das Python-Dictionary MEMORY, z.B. MEMORY['meine_variable'] = meine_variable.\n"
-        "- Verwende Variablen aus MEMORY für Folgeanweisungen, z.B. fahre zu MEMORY['positionen'][0].\n"
-        "- Wenn du eine lokale Variable (z.B. Ergebnis einer Berechnung oder Rückgabe einer Funktion) erzeugst, schreibe sie ebenfalls explizit ins MEMORY, falls sie später wiederverwendet werden könnte. Beispiel: ergebnis = irgendwas(); MEMORY['ergebnis'] = ergebnis\n"
+        "- Wenn du im Code eine neue Positionen erzeugst, schreibe diese am Ende explizit in das Python-Dictionary MEMORY, z.B. MEMORY['meine_variable'] = meine_variable.\n"
+        "- Verwende Variablen aus MEMORY für Folgeanweisungen, z.B. fahre zu MEMORY['positionen'][0]. Position 1/A verweist auf MEMORY['positionen'][0], Position 2/B verweist auf MEMORY['positionen'][1]\n"
         "- Prüfe in jeder Schleife oder langen Aktion regelmäßig, ob stop_event.is_set() == True ist. Falls ja, stoppe sofort mit stop_robot() und return.\n"
         "- Wenn eine Variable wie 'positionen' schon existiert, nutze diese weiter.\n"
+        "- Liefere immer def main(stop_event, MEMORY): ... und KEINEN Code außerhalb dieser Funktion\n"
         "\nBeispiel (One-Shot mit korrektem Abbruch):\n"
-        "from gripper_control import gripper_open, gripper_close\n"
-        "from robot_teaching import teach_positions\n"
-        "from moveFun import send_pose_to_robot\n"
-        "import time\n"
-        "from stopRobot import stop_robot\n"
-        "positionen = teach_positions(num_positions=2)\n"
-        "for pose in positionen:\n"
-        "    if stop_event.is_set():\n"
-        "        stop_robot()\n"
-        "        return\n"
-        "    send_pose_to_robot(pose, acceleration=0.8, velocity=1.2)\n"
-        "gripper_open()\n"
-        "import time; time.sleep(2)\n"
-        "gripper_close()\n"
-        "stop_robot()\n"
-        "MEMORY['positionen'] = positionen\n\n"
-        "Bspeiel Positionen:\n"
+        "def main(stop_event, MEMORY):\n"
+        "   from gripper_control import gripper_open, gripper_close\n"
+        "   from robot_teaching import teach_positions\n"
+        "   from moveFun import send_pose_to_robot\n"
+        "   import time\n"
+        "   from stopRobot import stop_robot\n"
+        "   positionen = teach_positions(num_positions=2)\n"
+        "   for pose in positionen:\n"
+        "       if stop_event.is_set():\n"
+        "           stop_robot()\n"
+        "           return\n"
+        "       send_pose_to_robot(pose, acceleration=0.8, velocity=1.2)\n"
+        "   gripper_open()\n"
+        "   gripper_close()\n"
+        "   stop_robot()\n"
+        "   MEMORY['positionen'] = positionen\n\n"
+        "Bspeiel Positionen (1 und 2):\n"
         "positionen = [\n"
         "   [0.1, -0.5, 0.35, 3.14, -0.1, 0.02],\n"
         "   [0.12, -0.51, 0.34, 3.13, -0.11, 0.021]\n"
@@ -109,7 +109,7 @@ def generiere_code(prompt_text, memory, last_script=""):
     print(f"🧠 Sende an GPT: {prompt_text}")
     system_prompt = build_system_prompt(memory, last_script)
     response = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model="gpt-4.1-mini",
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt_text},
@@ -131,12 +131,19 @@ def stop_robot_and_code():
 def run_code(code, result_queue, memory):
     local_vars = {"MEMORY": memory, "stop_event": stop_event}
     try:
-        exec(code, globals(), local_vars)
+        exec(code, globals(), local_vars)  # main(...) wird jetzt definiert
+        # WICHTIG: main() explizit aufrufen!
+        if "main" in local_vars and callable(local_vars["main"]):
+            local_vars["main"](stop_event, memory)
         result_queue.put(local_vars)
     except Exception as e:
         result_queue.put({'_error': str(e)})
 
 def update_memory_from_locals(local_vars, memory):
+    # Erst die (vielleicht neuen oder veränderten) Speicherinhalte in MEMORY übernehmen
+    if "MEMORY" in local_vars:
+        memory.update(local_vars["MEMORY"])
+    # Zusätzlich neue einzelne Variablen in den Speicher übernehmen
     for k, v in local_vars.items():
         if not k.startswith("_") and k not in ("MEMORY", "stop_event"):
             memory[k] = v
