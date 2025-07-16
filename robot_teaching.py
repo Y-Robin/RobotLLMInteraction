@@ -9,7 +9,7 @@ ROBOT_PORT_RECEIVE = 30003
 PC_TRIGGER_PORT = 30004
 
 def send_urscript(script):
-    print("▶️ Send_urscript")
+    #print("▶️ Send_urscript")
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.connect((ROBOT_IP, ROBOT_PORT_SEND))
         s.sendall(script.encode())
@@ -42,7 +42,7 @@ def teach_positions(num_positions):
     poses = []
 
     # Starte zuerst Trigger- & Pose-Sockets
-    print("🔌 Öffne Server-Sockets...")
+    #print("🔌 Öffne Server-Sockets...")
     trigger_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     pose_server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
@@ -54,7 +54,7 @@ def teach_positions(num_positions):
     trigger_server.listen(1)
     pose_server.listen(1)
 
-    print("✅ Server-Sockets offen. Starte Roboter-Skript in 2 Sekunden...")
+    #print("✅ Server-Sockets offen. Starte Roboter-Skript in 2 Sekunden...")
     time.sleep(2)  # Sicherheitspuffer
 
     ur_script = f"""
@@ -95,26 +95,27 @@ teach_loop()
     # Jetzt auf Verbindungen warten
     trigger_conn, _ = trigger_server.accept()
     pose_conn, _ = pose_server.accept()
-    print("🤝 Roboter hat sich verbunden.")
+    #print("🤝 Roboter hat sich verbunden.")
 
     with trigger_conn, pose_conn:
         for i in range(num_positions):
             wait_for_save_gui(i+1)  # GUI statt input()
             trigger_conn.send(bytes([1]))  # Triggersignal senden
 
-            print("⏳ Warte auf Pose vom Roboter...")
+            #print("⏳ Warte auf Pose vom Roboter...")
             data = pose_conn.recv(1024)
             pose_str = data.decode().strip()
-            print("📦 Pose empfangen:", pose_str)
+            #print("📦 Pose empfangen:", pose_str)
             try:
                 pose_str_clean = pose_str.strip().removeprefix("p").strip("[]")
                 pose = [float(x) for x in pose_str_clean.split(",")]
                 poses.append(pose)
             except Exception as e:
-                print("⚠️ Fehler beim Parsen:", e)
+                a=1
+                #print("⚠️ Fehler beim Parsen:", e)
 
     trigger_server.close()
     pose_server.close()
 
-    print("✅ Alle Posen empfangen.")
+    #print("✅ Alle Posen empfangen.")
     return poses

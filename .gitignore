@@ -209,3 +209,6 @@ __marimo__/
 #Audio
 
 *.wav
+
+#Example code
+generated_codes

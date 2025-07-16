@@ -90,17 +90,17 @@ move_to_pose_secondary()
         conn.close()
     except socket.timeout:
         srv.close()
-        print("PC-Seite: kein Feedback – Timeout.")
+        #print("PC-Seite: kein Feedback – Timeout.")
         return False
     finally:
         srv.close()
 
     if msg == "done":
-        print("Zielposition erreicht ✓")
+        #print("Zielposition erreicht ✓")
         return True
     elif msg == "failed":
-        print("Inverse Kinematik ohne Lösung ✗")
+        #print("Inverse Kinematik ohne Lösung ✗")
         return False
     else:  # "timeout" oder unbekannt
-        print(f"Roboter meldet: {msg}")
+        #print(f"Roboter meldet: {msg}")
         return False

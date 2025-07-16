@@ -17,16 +17,17 @@ def run_urp_program(program_name: str, robot_ip: str = "192.168.25.3", dashboard
             # Programm laden
             s.sendall(f'load {program_name}\n'.encode())
             response_load = s.recv(1024).decode().strip()
-            print(f"[Dashboard] Load response: {response_load}")
+            #print(f"[Dashboard] Load response: {response_load}")
 
             # Programm starten
             s.sendall(b'play\n')
             response_play = s.recv(1024).decode().strip()
-            print(f"[Dashboard] Play response: {response_play}")
+            #print(f"[Dashboard] Play response: {response_play}")
             time.sleep(2)
 
     except Exception as e:
-        print(f"[Error] Failed to run program '{program_name}': {e}")
+        a = 1
+        #print(f"[Error] Failed to run program '{program_name}': {e}")
 
 def gripper_open():
     run_urp_program("gripper_open.urp")

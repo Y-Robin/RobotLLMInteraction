@@ -1,4 +1,5 @@
 import os
+import datetime
 from dotenv import load_dotenv
 from openai import OpenAI
 import sounddevice as sd
@@ -29,6 +30,26 @@ stop_event = threading.Event()
 LAST_SCRIPT = ""  # Hier speichern wir das letzte ausgeführte Skript
 EXTRA_PROMPT = ""  # Hier stehen die Zusatzinfos aus 'p'
 
+# --- Logging & Code Save ---
+LOGFILE = "robot_assist.log"
+CODE_SAVE_FOLDER = "generated_codes"
+
+def write_log(message):
+    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with open(LOGFILE, "a", encoding="utf-8") as f:
+        f.write(f"[{timestamp}] {message}\n")
+
+def save_code(code, suffix=""):
+    os.makedirs(CODE_SAVE_FOLDER, exist_ok=True)
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"code_{timestamp}{suffix}.py"
+    filepath = os.path.join(CODE_SAVE_FOLDER, filename)
+    with open(filepath, "w", encoding="utf-8") as f:
+        f.write(code)
+    write_log(f"Code gespeichert: {filepath}")
+    return filepath
+
+# --- Prompt Builder ---
 def build_system_prompt(memory, last_script="", extra_prompt=""):
     return (
         "Du bist ein Assistenzsystem, das Sprachbefehle in ausführbaren Python-Code für die Steuerung eines Roboters umwandelt.\n\n"
@@ -74,6 +95,7 @@ def build_system_prompt(memory, last_script="", extra_prompt=""):
         + f"\n\nBekannte Variablen (MEMORY):\n{repr(memory)}"
     )
 
+# --- Aufnahme und Transkription ---
 def record_audio_with_keypress(filename=AUDIO_FILE, stop_key="space"):
     print(f"Drücke '{stop_key}' zum Starten der Aufnahme...")
     while True:
@@ -101,10 +123,10 @@ def record_audio_with_keypress(filename=AUDIO_FILE, stop_key="space"):
         stream.close()
     audio_np = np.concatenate(recording, axis=0)
     scipy.io.wavfile.write(filename, SAMPLERATE, np.int16(audio_np * 32767))
-    print("✅ Aufnahme gespeichert.")
+    #print("✅ Aufnahme gespeichert.")
 
 def transkribiere_audio(filename=AUDIO_FILE):
-    print("📝 Transkribiere mit GPT-4o Transcribe...")
+    #print("📝 Transkribiere mit GPT-4o Transcribe...")
     with open(filename, "rb") as f:
         response = client.audio.transcriptions.create(
             model="gpt-4o-transcribe",  # ← neues Modell!
@@ -113,8 +135,9 @@ def transkribiere_audio(filename=AUDIO_FILE):
         )
     return response.text
 
+# --- GPT Codegenerierung ---
 def generiere_code(prompt_text, memory, last_script="", extra_prompt=""):
-    print(f"🧠 Sende an GPT: {prompt_text}")
+    write_log(f"GPT Anfrage mit Prompt: {prompt_text}")
     system_prompt = build_system_prompt(memory, last_script, extra_prompt)
     response = client.chat.completions.create(
         model="gpt-4.1-mini",
@@ -127,12 +150,13 @@ def generiere_code(prompt_text, memory, last_script="", extra_prompt=""):
     code = response.choices[0].message.content
     return code.strip()
 
+# --- Robot Control ---
 def stop_robot_and_code():
     global running_code_thread
     stop_event.set()
     stop_robot()
     if running_code_thread and running_code_thread.is_alive():
-        print("⏹️ Beende laufenden Code-Thread...")
+        write_log("⏹️ Beende laufenden Code-Thread...")
         running_code_thread.join(timeout=2)
         running_code_thread = None
 
@@ -156,6 +180,7 @@ def update_memory_from_locals(local_vars, memory):
         if not k.startswith("_") and k not in ("MEMORY", "stop_event"):
             memory[k] = v
 
+# --- Haupt-Loop ---
 def main_loop():
     global running_code_thread, LAST_SCRIPT, EXTRA_PROMPT
     print("Drücke 's' für Spracheingabe, 't' für Texteingabe, 'p' für Zusatzinfo per Sprache, 'u' für Zusatzinfo per Text, 'q' zum Beenden.")
@@ -165,10 +190,12 @@ def main_loop():
             try:
                 local_vars = result_queue.get_nowait()
                 if "_error" in local_vars:
+                    write_log(f"❌ Fehler beim Ausführen: {local_vars['_error']}")
                     print("❌ Fehler beim Ausführen:", local_vars["_error"])
                 else:
                     update_memory_from_locals(local_vars, MEMORY)
-                    print("✅ MEMORY wurde aktualisiert:", MEMORY)
+                    write_log(f"✅ MEMORY wurde aktualisiert: {MEMORY}")
+                    #print("✅ MEMORY wurde aktualisiert:", MEMORY)
             except queue.Empty:
                 pass
             running_code_thread = None  # Thread ist fertig
@@ -178,10 +205,13 @@ def main_loop():
             stop_robot_and_code()
             record_audio_with_keypress()
             text = transkribiere_audio()
+            write_log(f"Sprachtext erkannt: {text}")
             print(f"📜 Transkribierter Text: {text}")
             code = generiere_code(text, MEMORY, LAST_SCRIPT, EXTRA_PROMPT)
-            print("▶️ Führe Code aus:")
-            print(code)
+            #print("▶️ Führe Code aus:")
+            #print(code)
+            write_log("Generierter Code (Spracheingabe):\n" + code)
+            save_code(code, "_speech")
             LAST_SCRIPT = code
             stop_event.clear()
             running_code_thread = threading.Thread(target=run_code, args=(code, result_queue, MEMORY.copy()))
@@ -195,10 +225,14 @@ def main_loop():
             text = input("Gib deinen Befehl ein: ")
             if not text.strip():
                 print("❗ Kein Text eingegeben.")
+                write_log("Leere Texteingabe erhalten.")
             else:
+                write_log(f"Textbefehl erhalten: {text}")
                 code = generiere_code(text, MEMORY, LAST_SCRIPT, EXTRA_PROMPT)
                 print("▶️ Führe Code aus:")
                 print(code)
+                write_log("Generierter Code (Texteingabe):\n" + code)
+                save_code(code, "_text")
                 LAST_SCRIPT = code
                 stop_event.clear()
                 running_code_thread = threading.Thread(target=run_code, args=(code, result_queue, MEMORY.copy()))
@@ -214,9 +248,11 @@ def main_loop():
                 if EXTRA_PROMPT:
                     EXTRA_PROMPT += "\n"
                 EXTRA_PROMPT += extra_text.strip()
+                write_log(f"Zusatzinfo (Sprache) aktualisiert: {extra_text.strip()}")
                 print(f"🔖 Zusatzinfo aktualisiert:\n{EXTRA_PROMPT}")
             else:
                 print("❗ Keine Zusatzinfo erkannt.")
+                write_log("Leere Zusatzinfo per Sprache.")
             time.sleep(1.2)
             print("Drücke 's' für Spracheingabe, 't' für Texteingabe, 'p' für Zusatzinfo per Sprache, 'u' für Zusatzinfo per Text, 'q' zum Beenden.")
 
@@ -227,14 +263,17 @@ def main_loop():
                 if EXTRA_PROMPT:
                     EXTRA_PROMPT += "\n"
                 EXTRA_PROMPT += extra_text.strip()
+                write_log(f"Zusatzinfo (Text) aktualisiert: {extra_text.strip()}")
                 print(f"🔖 Zusatzinfo aktualisiert:\n{EXTRA_PROMPT}")
             else:
                 print("❗ Keine Zusatzinfo erkannt.")
+                write_log("Leere Zusatzinfo per Text.")
             time.sleep(1.2)
             print("Drücke 's' für Spracheingabe, 't' für Texteingabe, 'p' für Zusatzinfo per Sprache, 'u' für Zusatzinfo per Text, 'q' zum Beenden.")
 
         elif keyboard.is_pressed("q"):
             print("🏁 Beende...")
+            write_log("Programm beendet.")
             stop_robot_and_code()
             break
 
@@ -242,4 +281,3 @@ def main_loop():
 
 if __name__ == "__main__":
     main_loop()
-
