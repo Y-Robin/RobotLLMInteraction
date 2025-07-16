@@ -199,6 +199,7 @@ def main_loop():
             except queue.Empty:
                 pass
             running_code_thread = None  # Thread ist fertig
+            print("✅ Ausführung fertig!") 
 
         if keyboard.is_pressed("s"):
             print("\n[🎤 Sprachaufnahme]")
