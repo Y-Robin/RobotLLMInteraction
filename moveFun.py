@@ -68,6 +68,7 @@ def move_to_pose_secondary():
       tick = tick + 1
     end
   else:
+    textmsg(">> IK solution NOT found! Aborting.")
     socket_open("{pc_ip}", {pc_port}, "pc")
     socket_send_string("failed\\n", "pc")
     socket_close("pc")

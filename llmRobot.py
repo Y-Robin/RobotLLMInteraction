@@ -61,6 +61,7 @@ def build_system_prompt(memory, last_script="", extra_prompt=""):
         "- Verwende Variablen aus MEMORY für Folgeanweisungen, z.B. fahre zu MEMORY['positionen'][0]. Position 1/A verweist auf MEMORY['positionen'][0], Position 2/B verweist auf MEMORY['positionen'][1]\n"
         "- Prüfe in jeder Schleife oder langen Aktion regelmäßig, ob stop_event.is_set() == True ist. Falls ja, stoppe sofort mit stop_robot() und return.\n"
         "- Wenn eine Variable wie 'positionen' schon existiert, nutze diese weiter.\n"
+        "- Es soll auch möglich sein relativ zu einer position zu fahren. Also soll es auch möglich sein 1 cm weiter -links/+rechts(erste wert der Position)/-vorne/+hinten(zweite wert der Position)/+oben/-unten(dritter wert der Position). Die werte sind in meter. Du kannst die positionen mit addition oder subtraktion verändern. Achte auf die Einheit! Beispiel pos = MEMORY['positionen'][0].copy(); pos[0] += 0.10#10 zentimeter\n"
         "- Liefere immer def main(stop_event, MEMORY): ... und KEINEN Code außerhalb dieser Funktion\n"
         "\nBeispiel (One-Shot mit korrektem Abbruch):\n"
         "def main(stop_event, MEMORY):\n"
@@ -230,8 +231,8 @@ def main_loop():
             else:
                 write_log(f"Textbefehl erhalten: {text}")
                 code = generiere_code(text, MEMORY, LAST_SCRIPT, EXTRA_PROMPT)
-                print("▶️ Führe Code aus:")
-                print(code)
+                #print("▶️ Führe Code aus:")
+                #tprint(code)
                 write_log("Generierter Code (Texteingabe):\n" + code)
                 save_code(code, "_text")
                 LAST_SCRIPT = code
