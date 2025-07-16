@@ -96,16 +96,20 @@ def record_audio_with_keypress(filename=AUDIO_FILE, stop_key="space"):
     print("✅ Aufnahme gespeichert.")
 
 def transkribiere_audio(filename=AUDIO_FILE):
-    print("📝 Transkribiere mit Whisper (OpenAI)...")
+    print("📝 Transkribiere mit GPT-4o Transcribe...")
     with open(filename, "rb") as f:
-        response = client.audio.transcriptions.create(model="whisper-1", file=f)
+        response = client.audio.transcriptions.create(
+            model="gpt-4o-transcribe",  # ← neues Modell!
+            file=f,
+            language="de"  # Optional: Deutsch explizit setzen
+        )
     return response.text
 
 def generiere_code(prompt_text, memory, last_script=""):
     print(f"🧠 Sende an GPT: {prompt_text}")
     system_prompt = build_system_prompt(memory, last_script)
     response = client.chat.completions.create(
-        model="gpt-4o",
+        model="gpt-4o-mini",
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt_text},
