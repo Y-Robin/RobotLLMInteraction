@@ -58,7 +58,7 @@ def build_system_prompt(memory, last_script="", extra_prompt=""):
         "- Antworte ausschließlich mit ausführbarem Python-Code, ohne Kommentare oder Erklärungen. und ohne ```python. Nur der Code!!!s\n"
         "- Benutze nur die bereitgestellten Funktionen: send_pose_to_robot(), gripper_open(), gripper_close(), teach_positions(), stop_robot(), usw.\n"
         "- Wenn du im Code eine neue Positionen erzeugst, schreibe diese am Ende explizit in das Python-Dictionary MEMORY, z.B. MEMORY['meine_variable'] = meine_variable.\n"
-        "- Verwende Variablen aus MEMORY für Folgeanweisungen, z.B. fahre zu MEMORY['positionen'][0]. Position 1/A verweist auf MEMORY['positionen'][0], Position 2/B verweist auf MEMORY['positionen'][1]\n"
+        "- Verwende Variablen aus MEMORY für Folgeanweisungen, z.B. fahre zu MEMORY['positionen'][0]. Position 1/A verweist auf MEMORY['positionen'][0], Position 2/B verweist auf MEMORY['positionen'][1]. Der Nutzer kann den Positionen neue Namen geben, diese müssen trotzdem mittel 0,1,2 etc addressiert werden.\n"
         "- Prüfe in jeder Schleife oder langen Aktion regelmäßig, ob stop_event.is_set() == True ist. Falls ja, stoppe sofort mit stop_robot() und return.\n"
         "- Wenn eine Variable wie 'positionen' schon existiert, nutze diese weiter.\n"
         "- Liefere immer def main(stop_event, MEMORY): ... und KEINEN Code außerhalb dieser Funktion\n"

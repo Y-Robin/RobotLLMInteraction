@@ -9,7 +9,7 @@ def send_pose_to_robot(
         robot_port=30002,         # Secondary bleibt
         acceleration=1.2,
         velocity=1.5,
-        blend_radius=0.05,
+        blend_radius=0.01,
         tol_mm=15,
         timeout_s=30,
         pc_ip="192.168.25.2"      # <– IP deines PCs (aus Robotensicht!)
@@ -38,9 +38,10 @@ def send_pose_to_robot(
     tol = tol_mm / 1000.0
     pose_str = "[" + ", ".join(map(str, pose_target)) + "]"
 
+    #set_tcp(p[0,0,0,0,0,0])
+
     ur_script = f"""
 def move_to_pose_secondary():
-  set_tcp(p[0,0,0,0,0,0])
   target = p{pose_str}
   qnear  = get_actual_joint_positions()
 
