@@ -9,7 +9,7 @@ def send_pose_to_robot(
         robot_port=30002,         # Secondary bleibt
         acceleration=1.2,
         velocity=1.5,
-        blend_radius=0.01,
+        blend_radius=0.05,
         tol_mm=15,
         timeout_s=30,
         pc_ip="192.168.25.2"      # <– IP deines PCs (aus Robotensicht!)
@@ -47,7 +47,7 @@ def move_to_pose_secondary():
   if get_inverse_kin_has_solution(target, qnear):
     movej(get_inverse_kin(target, qnear),
           a={acceleration}, v={velocity}, r={blend_radius})
-
+    stopj(1.0)
     tick = 0
     tol  = {tol}
     while True:
