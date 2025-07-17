@@ -1,6 +1,11 @@
 # RobotLLMInteraction
-Dieses Repository ermöglicht die dynamische Steuerung eines Roboters per Sprachbefehl. Nutzer können über Sprachsteuerung flexibel und intuitiv verschiedene Befehle an den Roboter übermitteln, um dessen Verhalten in Echtzeit zu steuern.
+Dieses Repository ermöglicht die dynamische Steuerung eines Roboters (UR3e) per Sprachbefehl. Nutzer können über Sprachsteuerung flexibel und intuitiv verschiedene Befehle an den Roboter übermitteln, um dessen Verhalten in Echtzeit zu steuern.
 
+# VENV
+- Erstelle eine venv und installiere die Notwendigen Bibliotheken
+- dotenv, openai, sounddevice scipy und keyboard
+- Passe die ip des Roboters und des PC an(Roboter: 192.168.25.3, PC: 192.168.25.2)
+- Ports sind aus der Anleitung übernommens
 
 # Aktiviere venv:
 - Falls noch nicht geschehen: ```Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser ```
