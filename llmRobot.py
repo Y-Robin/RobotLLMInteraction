@@ -33,6 +33,7 @@ EXTRA_PROMPT = ""  # Hier stehen die Zusatzinfos aus 'p'
 # --- Logging & Code Save ---
 LOGFILE = "robot_assist.log"
 CODE_SAVE_FOLDER = "generated_codes"
+FULL_PROMPT_FOLDER = "full_prompts"
 
 def write_log(message):
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -49,6 +50,19 @@ def save_code(code, suffix=""):
     write_log(f"Code gespeichert: {filepath}")
     return filepath
 
+def save_full_prompt(system_prompt, user_prompt, suffix=""):
+    os.makedirs(FULL_PROMPT_FOLDER, exist_ok=True)
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"prompt_{timestamp}{suffix}.txt"
+    filepath = os.path.join(FULL_PROMPT_FOLDER, filename)
+    with open(filepath, "w", encoding="utf-8") as f:
+        f.write("[SYSTEM PROMPT]\n")
+        f.write(system_prompt.strip() + "\n\n")
+        f.write("[USER PROMPT]\n")
+        f.write(user_prompt.strip())
+    write_log(f"Full Prompt gespeichert: {filepath}")
+    return filepath
+
 # --- Prompt Builder ---
 def build_system_prompt(memory, last_script="", extra_prompt=""):
     return (
@@ -58,7 +72,7 @@ def build_system_prompt(memory, last_script="", extra_prompt=""):
         "- Antworte ausschließlich mit ausführbarem Python-Code, ohne Kommentare oder Erklärungen. und ohne ```python. Nur der Code!!!s\n"
         "- Benutze nur die bereitgestellten Funktionen: send_pose_to_robot(), gripper_open(), gripper_close(), teach_positions(), stop_robot(), usw.\n"
         "- Wenn du im Code eine neue Positionen erzeugst, schreibe diese am Ende explizit in das Python-Dictionary MEMORY, z.B. MEMORY['meine_variable'] = meine_variable.\n"
-        "- Verwende Variablen aus MEMORY für Folgeanweisungen, z.B. fahre zu MEMORY['positionen'][0]. Position 1/A verweist auf MEMORY['positionen'][0], Position 2/B verweist auf MEMORY['positionen'][1]. Der Nutzer kann den Positionen neue Namen geben, diese müssen trotzdem mittel 0,1,2 etc addressiert werden.\n"
+        "- Verwende Variablen aus MEMORY für Folgeanweisungen, z.B. fahre zu MEMORY['positionen'][0]. Position 1/A verweist auf MEMORY['positionen'][0], Position 2/B verweist auf MEMORY['positionen'][1]. Der Nutzer kann den Positionen neue Namen geben, diese müssen trotzdem mittel MEMORY['positionen'][0],MEMORY['positionen'][1],MEMORY['positionen'][2] etc addressiert werden.\n"
         "- Prüfe in jeder Schleife oder langen Aktion regelmäßig, ob stop_event.is_set() == True ist. Falls ja, stoppe sofort mit stop_robot() und return.\n"
         "- Wenn eine Variable wie 'positionen' schon existiert, nutze diese weiter.\n"
         "- Liefere immer def main(stop_event, MEMORY): ... und KEINEN Code außerhalb dieser Funktion\n"
@@ -85,7 +99,7 @@ def build_system_prompt(memory, last_script="", extra_prompt=""):
         "   gripper_close()\n"
         "   stop_robot()\n"
         "   MEMORY['positionen'] = positionen\n\n"
-        "Bspeiel Positionen (1 und 2):\n"
+        "Beispiel Positionen (1 und 2):\n"
         "positionen = [\n"
         "   [0.1, -0.5, 0.35, 3.14, -0.1, 0.02],\n"
         "   [0.12, -0.51, 0.34, 3.13, -0.11, 0.021]\n"
@@ -95,7 +109,7 @@ def build_system_prompt(memory, last_script="", extra_prompt=""):
         + f"\n\nBekannte Variablen (MEMORY):\n{repr(memory)}"
     )
 
-# --- Aufnahme und Transkription ---
+# --- Audio Aufnahme & Transkription ---
 def record_audio_with_keypress(filename=AUDIO_FILE, stop_key="space"):
     print(f"Drücke '{stop_key}' zum Starten der Aufnahme...")
     while True:
@@ -123,15 +137,13 @@ def record_audio_with_keypress(filename=AUDIO_FILE, stop_key="space"):
         stream.close()
     audio_np = np.concatenate(recording, axis=0)
     scipy.io.wavfile.write(filename, SAMPLERATE, np.int16(audio_np * 32767))
-    #print("✅ Aufnahme gespeichert.")
 
 def transkribiere_audio(filename=AUDIO_FILE):
-    #print("📝 Transkribiere mit GPT-4o Transcribe...")
     with open(filename, "rb") as f:
         response = client.audio.transcriptions.create(
-            model="gpt-4o-transcribe",  # ← neues Modell!
+            model="gpt-4o-transcribe",
             file=f,
-            language="de"  # Optional: Deutsch explizit setzen
+            language="de"
         )
     return response.text
 
@@ -139,6 +151,7 @@ def transkribiere_audio(filename=AUDIO_FILE):
 def generiere_code(prompt_text, memory, last_script="", extra_prompt=""):
     write_log(f"GPT Anfrage mit Prompt: {prompt_text}")
     system_prompt = build_system_prompt(memory, last_script, extra_prompt)
+    save_full_prompt(system_prompt, prompt_text)  # <-- neu hinzugefügt
     response = client.chat.completions.create(
         model="gpt-4.1-mini",
         messages=[
@@ -163,8 +176,7 @@ def stop_robot_and_code():
 def run_code(code, result_queue, memory):
     local_vars = {"MEMORY": memory, "stop_event": stop_event}
     try:
-        exec(code, globals(), local_vars)  # main(...) wird jetzt definiert
-        # WICHTIG: main() explizit aufrufen!
+        exec(code, globals(), local_vars)
         if "main" in local_vars and callable(local_vars["main"]):
             local_vars["main"](stop_event, memory)
         result_queue.put(local_vars)
@@ -172,10 +184,8 @@ def run_code(code, result_queue, memory):
         result_queue.put({'_error': str(e)})
 
 def update_memory_from_locals(local_vars, memory):
-    # Erst die (vielleicht neuen oder veränderten) Speicherinhalte in MEMORY übernehmen
     if "MEMORY" in local_vars:
         memory.update(local_vars["MEMORY"])
-    # Zusätzlich neue einzelne Variablen in den Speicher übernehmen
     for k, v in local_vars.items():
         if not k.startswith("_") and k not in ("MEMORY", "stop_event"):
             memory[k] = v
@@ -185,7 +195,6 @@ def main_loop():
     global running_code_thread, LAST_SCRIPT, EXTRA_PROMPT
     print("Drücke 's' für Spracheingabe, 't' für Texteingabe, 'p' für Zusatzinfo per Sprache, 'u' für Zusatzinfo per Text, 'q' zum Beenden.")
     while True:
-        # Wenn Thread fertig ist, speichere Rückgabe in MEMORY!
         if running_code_thread and not running_code_thread.is_alive():
             try:
                 local_vars = result_queue.get_nowait()
@@ -195,10 +204,9 @@ def main_loop():
                 else:
                     update_memory_from_locals(local_vars, MEMORY)
                     write_log(f"✅ MEMORY wurde aktualisiert: {MEMORY}")
-                    #print("✅ MEMORY wurde aktualisiert:", MEMORY)
             except queue.Empty:
                 pass
-            running_code_thread = None  # Thread ist fertig
+            running_code_thread = None
             print("✅ Ausführung fertig!") 
 
         if keyboard.is_pressed("s"):
@@ -209,8 +217,6 @@ def main_loop():
             write_log(f"Sprachtext erkannt: {text}")
             print(f"📜 Transkribierter Text: {text}")
             code = generiere_code(text, MEMORY, LAST_SCRIPT, EXTRA_PROMPT)
-            #print("▶️ Führe Code aus:")
-            #print(code)
             write_log("Generierter Code (Spracheingabe):\n" + code)
             save_code(code, "_speech")
             LAST_SCRIPT = code
@@ -230,8 +236,6 @@ def main_loop():
             else:
                 write_log(f"Textbefehl erhalten: {text}")
                 code = generiere_code(text, MEMORY, LAST_SCRIPT, EXTRA_PROMPT)
-                #print("▶️ Führe Code aus:")
-                #tprint(code)
                 write_log("Generierter Code (Texteingabe):\n" + code)
                 save_code(code, "_text")
                 LAST_SCRIPT = code

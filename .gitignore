@@ -212,3 +212,6 @@ __marimo__/
 
 #Example code
 generated_codes
+
+# Prompt logs
+full_prompts
