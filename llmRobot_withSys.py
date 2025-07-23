@@ -25,7 +25,7 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 # ─── Konstanten / Dateien ─────────────────────────────────────────────────────
 AUDIO_FILE            = "befehl.wav"
 SAMPLERATE            = 16000
-SYSTEM_PROMPT_FILE    = "full_prompts/demo.txt"
+SYSTEM_PROMPT_FILE    = "DemoPrompts/demo.txt"
 LOGFILE               = "robot_assist.log"
 CODE_SAVE_FOLDER      = "generated_codes"
 FULL_PROMPT_FOLDER    = "full_prompts"

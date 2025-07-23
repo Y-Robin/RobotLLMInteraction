@@ -1,6 +1,9 @@
 # RobotLLMInteraction
 Dieses Repository ermöglicht die dynamische Steuerung eines Roboters (UR3e) per Sprachbefehl. Nutzer können über Sprachsteuerung flexibel und intuitiv verschiedene Befehle an den Roboter übermitteln, um dessen Verhalten in Echtzeit zu steuern.
 
+# Python Version
+- Python 3.11.9
+
 # VENV
 - Erstelle eine venv und installiere die Notwendigen Bibliotheken
 - dotenv, openai, sounddevice scipy und keyboard
