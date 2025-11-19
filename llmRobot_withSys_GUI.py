@@ -57,6 +57,26 @@ spinner_frames         = ["⏳", "◴", "◷", "◶", "◵"]
 
 SYSTEM_PROMPT_BASE     = ""   # ursprünglich aus der Datei
 
+# Flow-Diagramm
+flow_canvas            = None
+FLOW_NODES             = {}   # phase -> dict mit IDs
+CURRENT_PHASE          = "ready"
+
+FLOW_DEFINITION = [
+    {"phase": "ready",      "label": "READY",   "icon": "✅"},
+    {"phase": "input",      "label": "SPRACHE", "icon": "🎙"},
+    {"phase": "stt",        "label": "Speech → Text", "icon": "🎧"},
+    {"phase": "llm",        "label": "LLM",     "icon": "🤖"},
+    {"phase": "code",       "label": "CODE",    "icon": "📜"},
+    {"phase": "robot",      "label": "ROBOT",   "icon": "🦾"},
+    {"phase": "stopped",    "label": "STOP",    "icon": "⛔"},
+]
+
+# Aufnahme-State für Speech→Code
+speech_recording = False
+speech_record_stop_event = threading.Event()
+speech_button = None  # Referenz auf den Button „Sprache → Code“
+
 # ──────────────────────────────────────────────────────────────────────────────
 def dict_without_functions(d):
     if isinstance(d, dict):
@@ -179,7 +199,6 @@ def update_prompt_history_section():
     if m:
         new_txt = txt[:m.start()] + new_block + txt[m.end():]
     else:
-        # vor Zusatzinfo / Letztes Skript / MEMORY einfügen, falls vorhanden
         insert_pos = len(txt)
         for marker in ["\n\nZusatzinfo:", "\n\nLetztes ausgeführtes Skript:", "\n\nBekannte Variablen (MEMORY):"]:
             pos = txt.find(marker)
@@ -189,7 +208,6 @@ def update_prompt_history_section():
             new_txt = txt + new_block
         else:
             new_txt = txt[:insert_pos] + new_block + txt[insert_pos:]
-
     set_system_prompt_text(new_txt)
 
 def update_zusatzinfo_section(extra_text: str):
@@ -204,7 +222,6 @@ def update_zusatzinfo_section(extra_text: str):
     if m:
         new_txt = txt[:m.start()] + new_block + txt[m.end():]
     else:
-        # Falls noch kein Zusatzinfo-Block: vor MEMORY einsortieren, sonst ans Ende
         mem_pos = txt.find("\n\nBekannte Variablen (MEMORY):")
         if mem_pos == -1:
             new_txt = txt + new_block
@@ -225,7 +242,6 @@ def update_last_script_section(code: str):
     if m:
         new_txt = txt[:m.start()] + new_block + txt[m.end():]
     else:
-        # Falls noch kein Block: vor MEMORY einsortieren, sonst ans Ende
         mem_pos = txt.find("\n\nBekannte Variablen (MEMORY):")
         if mem_pos == -1:
             new_txt = txt + new_block
@@ -241,7 +257,6 @@ def update_memory_section():
     mem_repr = repr(dict_without_functions(MEMORY))
     new_block = f"\n\nBekannte Variablen (MEMORY):\n{mem_repr}"
 
-    # Nur den Inhalt des MEMORY-Blocks ersetzen, Rest davor/danach bleibt
     pattern = r"(\n\nBekannte Variablen \(MEMORY\):\n)(.*?)(\Z)"
     m = re.search(pattern, txt, flags=re.DOTALL)
     if m:
@@ -252,11 +267,36 @@ def update_memory_section():
 
 # ─── Audio & Transkription ────────────────────────────────────────────────────
 def record_audio_fixed_duration(fname=AUDIO_FILE, duration=5.0):
+    """Für Zusatzinfo (Sprache) – einfache 5s-Aufnahme."""
     write_log(f"Starte Audioaufnahme ({duration} s)")
     recording = sd.rec(int(duration * SAMPLERATE), samplerate=SAMPLERATE, channels=1)
     sd.wait()
     scipy.io.wavfile.write(fname, SAMPLERATE,
                            np.int16(recording.flatten() * 32767))
+
+def record_audio_with_early_stop(fname, stop_evt: threading.Event, max_duration=5.0):
+    """Aufnahme, die max. max_duration läuft und durch stop_evt früher beendet werden kann."""
+    write_log(f"Starte Audioaufnahme (max {max_duration} s, frühzeitiger Stop möglich)")
+    recording = []
+    stream = sd.InputStream(samplerate=SAMPLERATE, channels=1)
+    start_time = time.time()
+    with stream:
+        while True:
+            if stop_evt.is_set():
+                write_log("Audioaufnahme: Stop-Event gesetzt, breche ab.")
+                break
+            if time.time() - start_time >= max_duration:
+                write_log("Audioaufnahme: max Dauer erreicht.")
+                break
+            data, _ = stream.read(1024)
+            recording.append(data.copy())
+    if recording:
+        audio = np.concatenate(recording, axis=0)
+    else:
+        audio = np.zeros((1, 1), dtype=np.float32)
+    scipy.io.wavfile.write(fname, SAMPLERATE,
+                           np.int16(audio.flatten() * 32767))
+
 
 def transkribiere_audio(fname=AUDIO_FILE):
     with open(fname, "rb") as f:
@@ -302,7 +342,7 @@ def stop_robot_and_code():
 
     if running_code_thread and running_code_thread.is_alive():
         write_log("⏹️ Stop angefordert, warte auf Code-Thread …")
-        running_code_thread.join(timeout=2)
+        running_code_thread.join(timeout=0.1)
 
         if running_code_thread.is_alive():
             write_log("⚠️ Code-Thread läuft nach Stop noch weiter (kann nicht hart beendet werden).")
@@ -354,12 +394,130 @@ def update_memory_from_locals(lcl, memory):
         if k not in ("MEMORY", "stop_event") and not k.startswith("_"):
             memory[k] = v
 
+# ─── Flow-Diagramm ───────────────────────────────────────────────────────────
+def redraw_flow_diagram(event=None):
+    global FLOW_NODES
+    if flow_canvas is None:
+        return
+
+    flow_canvas.delete("all")
+    width = flow_canvas.winfo_width()
+    if width < 1:
+        width = 800  # fallback
+
+    height = flow_canvas.winfo_height()
+    if height < 80:
+        height = 110  # etwas größer
+
+    y = height // 2
+    box_h = 60  # höher = weniger gequetscht
+
+    count = len(FLOW_DEFINITION)
+    margin = 40
+    available = max(250, width - 2 * margin)
+
+    # Boxbreite dynamisch, aber begrenzt
+    box_w = min(150, max(100, available / (count * 1.2)))
+    if count > 1:
+        gap = max(20, (available - count * box_w) / (count - 1))
+    else:
+        gap = 0
+
+    FLOW_NODES = {}
+
+    # Nodes zeichnen
+    for i, node in enumerate(FLOW_DEFINITION):
+        x1 = margin + i * (box_w + gap)
+        x2 = x1 + box_w
+        y1 = y - box_h // 2
+        y2 = y + box_h // 2
+
+        rect = flow_canvas.create_rectangle(
+            x1, y1, x2, y2,
+            fill="#333333",
+            outline="#555555",
+            width=2,
+            tags=("node", node["phase"])
+        )
+        icon = flow_canvas.create_text(
+            (x1 + x2) // 2, y1 + 15,
+            text=node["icon"],
+            fill="white",
+            font=("Segoe UI Emoji", 16, "bold")
+        )
+        label = flow_canvas.create_text(
+            (x1 + x2) // 2, y1 + 35,
+            text=node["label"],
+            fill="white",
+            font=("Segoe UI", 9, "bold")
+        )
+
+        FLOW_NODES[node["phase"]] = {
+            "rect": rect,
+            "icon": icon,
+            "label": label,
+            "x_center": (x1 + x2) // 2
+        }
+
+    # Pfeile zwischen den Nodes
+    for i in range(count - 1):
+        p1 = FLOW_DEFINITION[i]["phase"]
+        p2 = FLOW_DEFINITION[i + 1]["phase"]
+        n1 = FLOW_NODES[p1]
+        n2 = FLOW_NODES[p2]
+        x1 = n1["x_center"] + box_w / 2 - 20
+        x2 = n2["x_center"] - box_w / 2 + 20
+        flow_canvas.create_line(
+            x1, y, x2, y,
+            fill="#888888",
+            width=2,
+            arrow=tk.LAST
+        )
+
+    update_flow_phase(CURRENT_PHASE)
+
+def build_flow_diagram(parent):
+    global flow_canvas
+    flow_canvas = tk.Canvas(parent, height=110, bg="#222222", highlightthickness=0)
+    flow_canvas.grid(row=0, column=0, columnspan=4, sticky="we", padx=5, pady=5)
+    flow_canvas.bind("<Configure>", redraw_flow_diagram)
+    redraw_flow_diagram()
+
+def update_flow_phase(phase: str):
+    """Hebt die aktuelle Phase im Flow-Diagramm hervor."""
+    global CURRENT_PHASE
+    CURRENT_PHASE = phase
+
+    if flow_canvas is None:
+        return
+
+    for ph, node in FLOW_NODES.items():
+        rect_id = node["rect"]
+
+        if ph == phase:
+            if ph == "stopped" or ph == "error":
+                fill = "#b71c1c"   # rot
+                outline = "#ff5252"
+            elif ph == "ready":
+                fill = "#1b5e20"   # grün
+                outline = "#66bb6a"
+            else:
+                fill = "#0d47a1"   # blau
+                outline = "#42a5f5"
+        else:
+            fill = "#333333"
+            outline = "#555555"
+
+        flow_canvas.itemconfig(rect_id, fill=fill, outline=outline)
+
 # ─── GUI-Helfer ───────────────────────────────────────────────────────────────
-def set_status(text, busy=False):
+def set_status(text, busy=False, phase=None):
     global spinner_running
     if status_label is not None:
         status_label.config(text=text)
     spinner_running = busy
+    if phase is not None:
+        update_flow_phase(phase)
 
 def animate_spinner():
     global spinner_index
@@ -394,19 +552,16 @@ def start_gpt_flow(prompt_text, suffix_for_save="_text"):
     if not prompt_text:
         return
 
-    # Wenn noch ein Code-Thread läuft: keine neue Ausführung starten
     if running_code_thread is not None and running_code_thread.is_alive():
-        set_status("⚠️ Es läuft noch ein Code-Thread – zuerst Stop drücken.", busy=False)
+        set_status("⚠️ Es läuft noch ein Code-Thread – zuerst Stop drücken.", busy=False, phase="stopped")
         return
 
-    # Historie erweitern und im System-Prompt updaten
     USER_PROMPT_HISTORY.append(prompt_text)
     update_prompt_history_section()
 
-    # Snapshot des System-Prompts NACH dem Update
     system_prompt = get_system_prompt_text()
 
-    set_status("⏳ Sende an GPT und führe Code aus …", busy=True)
+    set_status("Sende an GPT und generiere Code …", busy=True, phase="llm")
 
     def worker():
         global LAST_SCRIPT
@@ -429,22 +584,41 @@ def on_button_text():
         txt = prompt_text_widget.get("1.0", "end-1c").strip()
     if not txt:
         return
+    set_status("Text-Eingabe …", busy=True, phase="input")
     start_gpt_flow(txt, "_text")
 
 def on_button_speech():
-    set_status("🎙️ Aufnahme (5 s)…", busy=True)
-    def worker():
-        try:
-            record_audio_fixed_duration()
-            txt = transkribiere_audio().strip()
-            if not txt or txt == "[]":
-                result_queue.put({"type": "info", "message": "Keine Sprache erkannt."})
-                return
-            result_queue.put({"type": "speech_transcript", "text": txt})
-            start_gpt_flow(txt, "_speech")
-        except Exception as e:
-            result_queue.put({"type": "error", "message": str(e)})
-    threading.Thread(target=worker, daemon=True).start()
+    """Toggle: Start/Stop Aufnahme für Sprache→Code."""
+    global speech_recording
+    if not speech_recording:
+        # Aufnahme starten
+        speech_recording = True
+        speech_record_stop_event.clear()
+        set_status("🎙️ Aufnahme läuft … (erneut klicken zum Stoppen, max. 5 s)", busy=True, phase="input")
+        if speech_button is not None:
+            speech_button.config(text="Aufnahme stoppen")
+
+        def worker():
+            try:
+                record_audio_with_early_stop(AUDIO_FILE, speech_record_stop_event, max_duration=5.0)
+                result_queue.put({"type": "after_record"})
+                txt = transkribiere_audio().strip()
+                result_queue.put({"type": "speech_record_done"})
+                if not txt or txt == "[]":
+                    result_queue.put({"type": "info", "message": "Keine Sprache erkannt."})
+                    result_queue.put({"type": "phase", "phase": "ready"})
+                    return
+                result_queue.put({"type": "speech_transcript", "text": txt})
+                result_queue.put({"type": "phase", "phase": "stt"})
+                result_queue.put({"type": "start_gpt", "prompt": txt, "suffix": "_speech"})
+            except Exception as e:
+                result_queue.put({"type": "error", "message": str(e)})
+                result_queue.put({"type": "speech_record_done"})
+        threading.Thread(target=worker, daemon=True).start()
+    else:
+        # Aufnahme beenden
+        speech_record_stop_event.set()
+        set_status("⏹️ Aufnahme wird beendet …", busy=True, phase="stt")
 
 def on_button_extra_text():
     global EXTRA_PROMPT
@@ -458,22 +632,26 @@ def on_button_extra_text():
 
 def on_button_extra_speech():
     global EXTRA_PROMPT
-    set_status("🎙️ Aufnahme Zusatzinfo (5 s)…", busy=True)
+    set_status("🎙️ Aufnahme Zusatzinfo (5 s)…", busy=True, phase="input")
     def worker():
         try:
             record_audio_fixed_duration()
-            extra = transkribiere_audio().strip()
-            if not extra or extra == "[]":
+            txt = transkribiere_audio().strip()
+            if not txt or txt == "[]":
                 result_queue.put({"type": "info", "message": "Keine Zusatzinfo erkannt."})
+                result_queue.put({"type": "phase", "phase": "ready"})
                 return
-            result_queue.put({"type": "extra_speech", "text": extra})
+            result_queue.put({"type": "extra_speech", "text": txt})
         except Exception as e:
             result_queue.put({"type": "error", "message": str(e)})
     threading.Thread(target=worker, daemon=True).start()
 
 def on_button_stop():
     stop_robot_and_code()
-    set_status("⏹️ Code/Roboter gestoppt.", busy=False)
+    phase = "ready"
+    if running_code_thread is not None and running_code_thread.is_alive():
+        phase = "stopped"
+    set_status("⏹️ Code/Roboter gestoppt.", busy=False, phase=phase)
 
 def on_button_quit():
     stop_robot_and_code()
@@ -482,19 +660,35 @@ def on_button_quit():
 
 # ─── Queue-Verarbeitung ───────────────────────────────────────────────────────
 def process_queue():
-    global running_code_thread, LAST_SCRIPT, EXTRA_PROMPT, MEMORY
+    global running_code_thread, LAST_SCRIPT, EXTRA_PROMPT, MEMORY, speech_recording
     try:
         while True:
             item = result_queue.get_nowait()
             t = item.get("type")
 
             if t == "error":
-                set_status(f"❌ Fehler: {item['message']}", busy=False)
-                write_log(f"Fehler: {item['message']}")
+                msg = item["message"]
+                if "durch Benutzer gestoppt" in msg:
+                    set_status("⏹️ Vom Benutzer gestoppt.", busy=False, phase="ready")
+                else:
+                    set_status(f"❌ Fehler: {msg}", busy=False, phase="stopped")
+                write_log(f"Fehler: {msg}")
 
             elif t == "info":
                 set_status(f"ℹ️ {item['message']}", busy=False)
                 write_log(item['message'])
+
+            elif t == "phase":
+                update_flow_phase(item["phase"])
+
+            elif t == "after_record":
+                set_status("Wandle Sprache in Text um …", busy=True, phase="stt")
+
+            elif t == "speech_record_done":
+                # Aufnahme fertig -> Button zurücksetzen
+                speech_recording = False
+                if speech_button is not None:
+                    speech_button.config(text="Sprache → Code")
 
             elif t == "speech_transcript":
                 txt = item["text"]
@@ -507,6 +701,11 @@ def process_queue():
                 set_status("💾 Zusatzinfo (Sprache) gespeichert.", busy=False)
                 update_zusatzinfo_section(EXTRA_PROMPT)
 
+            elif t == "start_gpt":
+                prompt = item["prompt"]
+                suffix = item.get("suffix", "_text")
+                start_gpt_flow(prompt, suffix)
+
             elif t == "code_generated":
                 prompt = item["prompt"]
                 code   = item["code"]
@@ -516,7 +715,7 @@ def process_queue():
                 update_text_widget(prompt_text_widget, prompt, readonly=False)
                 update_text_widget(code_text_widget, code, readonly=True)
                 update_last_script_section(code)
-                set_status("▶️ Führe generierten Code aus …", busy=True)
+                set_status("▶️ Führe generierten Code aus …", busy=True, phase="code")
 
                 stop_event.clear()
                 running_code_thread = threading.Thread(
@@ -525,16 +724,17 @@ def process_queue():
                     daemon=True
                 )
                 running_code_thread.start()
+                update_flow_phase("robot")
 
             elif t == "code_result":
                 lcl = item["locals"]
                 if "_error" in lcl:
-                    set_status(f"❌ Fehler im Code: {lcl['_error']}", busy=False)
+                    set_status(f"❌ Fehler im Code: {lcl['_error']}", busy=False, phase="stopped")
                     write_log(f"Codefehler: {lcl['_error']}")
                 else:
                     update_memory_from_locals(lcl, MEMORY)
                     write_log(f"MEMORY aktualisiert: {MEMORY}")
-                    set_status("✅ Code fertig.", busy=False)
+                    set_status("✅ Code fertig.", busy=False, phase="ready")
                     update_memory_section()
 
             result_queue.task_done()
@@ -546,51 +746,61 @@ def process_queue():
 
 # ─── GUI ──────────────────────────────────────────────────────────────────────
 def build_gui():
-    global root, status_label, prompt_text_widget, code_text_widget, system_prompt_widget, input_entry
+    global root, status_label, prompt_text_widget, code_text_widget, system_prompt_widget, input_entry, speech_button
 
     root = tk.Tk()
     root.title("Robot LLM Interface")
 
+    # Flow-Diagramm (Zeile 0)
+    build_flow_diagram(root)
+
+    # Status (Zeile 1)
     status_label = tk.Label(root, text="Bereit.", anchor="w")
-    status_label.grid(row=0, column=0, columnspan=4, sticky="we", padx=5, pady=5)
+    status_label.grid(row=1, column=0, columnspan=4, sticky="we", padx=5, pady=(0,5))
 
+    # Buttons oben (Zeile 2)
     btn_width = 22
-    btn_speech   = tk.Button(root, text="Sprache → Code",       command=on_button_speech,       width=btn_width)
-    btn_text     = tk.Button(root, text="Text → Code",          command=on_button_text,         width=btn_width)
-    btn_extra_s  = tk.Button(root, text="Zusatzinfo (Sprache)", command=on_button_extra_speech, width=btn_width)
-    btn_extra_t  = tk.Button(root, text="Zusatzinfo (Text)",    command=on_button_extra_text,   width=btn_width)
+    speech_button = tk.Button(root, text="Sprache → Code",       command=on_button_speech,       width=btn_width)
+    btn_text     = tk.Button(root, text="Text → Code",           command=on_button_text,         width=btn_width)
+    btn_extra_s  = tk.Button(root, text="Zusatzinfo (Sprache)",  command=on_button_extra_speech, width=btn_width)
+    btn_extra_t  = tk.Button(root, text="Zusatzinfo (Text)",     command=on_button_extra_text,   width=btn_width)
 
-    btn_speech.grid(  row=1, column=0, padx=5, pady=5, sticky="we")
-    btn_text.grid(    row=1, column=1, padx=5, pady=5, sticky="we")
-    btn_extra_s.grid( row=1, column=2, padx=5, pady=5, sticky="we")
-    btn_extra_t.grid( row=1, column=3, padx=5, pady=5, sticky="we")
+    speech_button.grid(row=2, column=0, padx=5, pady=5, sticky="we")
+    btn_text.grid(      row=2, column=1, padx=5, pady=5, sticky="we")
+    btn_extra_s.grid(   row=2, column=2, padx=5, pady=5, sticky="we")
+    btn_extra_t.grid(   row=2, column=3, padx=5, pady=5, sticky="we")
 
+    # Eingabe (Zeile 3/4)
     tk.Label(root, text="Eingabe (für Befehle oder Zusatzinfo):").grid(
-        row=2, column=0, columnspan=4, padx=5, pady=2, sticky="w"
+        row=3, column=0, columnspan=4, padx=5, pady=2, sticky="w"
     )
     input_entry = tk.Entry(root)
-    input_entry.grid(row=3, column=0, columnspan=4, padx=5, pady=2, sticky="we")
+    input_entry.grid(row=4, column=0, columnspan=4, padx=5, pady=2, sticky="we")
 
+    # Stop / Quit (Zeile 5)
     btn_stop  = tk.Button(root, text="Stop Code/Roboter",  command=on_button_stop)
     btn_quit  = tk.Button(root, text="Quit",               command=on_button_quit)
-    btn_stop.grid( row=4, column=0, padx=5, pady=5, sticky="we")
-    btn_quit.grid( row=4, column=3, padx=5, pady=5, sticky="we")
+    btn_stop.grid( row=5, column=0, padx=5, pady=5, sticky="we")
+    btn_quit.grid( row=5, column=3, padx=5, pady=5, sticky="we")
 
-    tk.Label(root, text="Letzter Prompt:").grid(row=5, column=0, padx=5, pady=2, sticky="w")
-    tk.Label(root, text="Generierter Code:").grid(row=5, column=1, padx=5, pady=2, sticky="w")
-    tk.Label(root, text="Aktueller System Prompt:").grid(row=5, column=2, padx=5, pady=2, sticky="w")
+    # Labels + Save-Button (Zeile 6)
+    tk.Label(root, text="Letzter Prompt:").grid(row=6, column=0, padx=5, pady=2, sticky="w")
+    tk.Label(root, text="Generierter Code:").grid(row=6, column=1, padx=5, pady=2, sticky="w")
+    tk.Label(root, text="Aktueller System Prompt:").grid(row=6, column=2, padx=5, pady=2, sticky="w")
 
     btn_save_sys = tk.Button(root, text="System Prompt speichern", command=on_button_save_system_prompt)
-    btn_save_sys.grid(row=5, column=3, padx=5, pady=2, sticky="e")
+    btn_save_sys.grid(row=6, column=3, padx=5, pady=2, sticky="e")
 
+    # Text-Fenster (Zeile 7)
     prompt_text_widget   = scrolledtext.ScrolledText(root, width=30, height=15, wrap="none")
     code_text_widget     = scrolledtext.ScrolledText(root, width=50, height=15, wrap="none")
     system_prompt_widget = scrolledtext.ScrolledText(root, width=50, height=15, wrap="none")
 
-    prompt_text_widget.grid(  row=6, column=0, padx=5, pady=5, sticky="nsew")
-    code_text_widget.grid(    row=6, column=1, padx=5, pady=5, sticky="nsew")
-    system_prompt_widget.grid(row=6, column=2, columnspan=2, padx=5, pady=5, sticky="nsew")
+    prompt_text_widget.grid(  row=7, column=0, padx=5, pady=5, sticky="nsew")
+    code_text_widget.grid(    row=7, column=1, padx=5, pady=5, sticky="nsew")
+    system_prompt_widget.grid(row=7, column=2, columnspan=2, padx=5, pady=5, sticky="nsew")
 
+    # Horizontale Scrollbars (Zeile 8)
     prompt_scroll_x = tk.Scrollbar(root, orient="horizontal", command=prompt_text_widget.xview)
     code_scroll_x   = tk.Scrollbar(root, orient="horizontal", command=code_text_widget.xview)
     sys_scroll_x    = tk.Scrollbar(root, orient="horizontal", command=system_prompt_widget.xview)
@@ -599,13 +809,13 @@ def build_gui():
     code_text_widget.configure(xscrollcommand=code_scroll_x.set)
     system_prompt_widget.configure(xscrollcommand=sys_scroll_x.set)
 
-    prompt_scroll_x.grid(row=7, column=0, padx=5, pady=(0,5), sticky="we")
-    code_scroll_x.grid(  row=7, column=1, padx=5, pady=(0,5), sticky="we")
-    sys_scroll_x.grid(   row=7, column=2, columnspan=2, padx=5, pady=(0,5), sticky="we")
+    prompt_scroll_x.grid(row=8, column=0, padx=5, pady=(0,5), sticky="we")
+    code_scroll_x.grid(  row=8, column=1, padx=5, pady=(0,5), sticky="we")
+    sys_scroll_x.grid(   row=8, column=2, columnspan=2, padx=5, pady=(0,5), sticky="we")
 
     code_text_widget.config(state="disabled")
 
-    # Initialer Systemprompt: BASE + ggf. Zusatzinfo + MEMORY
+    # Initialer Systemprompt
     initial_txt = SYSTEM_PROMPT_BASE
     if EXTRA_PROMPT:
         initial_txt += f"\n\nZusatzinfo: {EXTRA_PROMPT.strip()}"
@@ -613,14 +823,19 @@ def build_gui():
         initial_txt += f"\n\nBekannte Variablen (MEMORY):\n{repr(dict_without_functions(MEMORY))}"
     system_prompt_widget.insert(tk.END, initial_txt)
 
+    # Grid-Resizing
     root.grid_columnconfigure(0, weight=1)
     root.grid_columnconfigure(1, weight=2)
     root.grid_columnconfigure(2, weight=2)
     root.grid_columnconfigure(3, weight=0)
-    root.grid_rowconfigure(6, weight=1)
+    root.grid_rowconfigure(7, weight=1)
 
+    # Loops
     root.after(100, process_queue)
     root.after(150, animate_spinner)
+
+    # Startzustand im Flow
+    update_flow_phase("ready")
 
     return root
 
