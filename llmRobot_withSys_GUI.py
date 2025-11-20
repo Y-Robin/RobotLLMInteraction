@@ -19,6 +19,8 @@ from stopRobot import stop_robot
 from gripper_control import gripper_open, gripper_close
 from moveFun import send_pose_to_robot
 from robot_teaching import teach_positions  # wie im Ursprungsskript
+from bandFun import send_conveyor_to_robot
+from infoLicht import read_licht_input
 
 # ─── OpenAI ────────────────────────────────────────────────────────────────────
 load_dotenv()
@@ -27,7 +29,7 @@ client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 # ─── Konstanten / Dateien ─────────────────────────────────────────────────────
 AUDIO_FILE            = "befehl.wav"
 SAMPLERATE            = 16000
-SYSTEM_PROMPT_FILE    = "DemoPrompts/JaNein.txt"
+SYSTEM_PROMPT_FILE    = "DemoPrompts/demo2.txt"
 LOGFILE               = "robot_assist.log"
 CODE_SAVE_FOLDER      = "generated_codes"
 FULL_PROMPT_FOLDER    = "full_prompts"
@@ -384,6 +386,8 @@ def run_code(code, q, memory):
         "gripper_open": gripper_open,
         "gripper_close": gripper_close,
         "send_pose_to_robot": send_pose_to_robot,
+        "send_conveyor_to_robot": send_conveyor_to_robot,
+        "read_licht_input": read_licht_input,
     }
     try:
         exec(code, globals(), lcl)
