@@ -355,7 +355,7 @@ def generiere_code(system_prompt: str, prompt_text: str):
     write_log(f"GPT-Anfrage: {prompt_text}")
     save_full_prompt(system_prompt, prompt_text, suffix="")
     rsp   = client.chat.completions.create(
-        model="gpt-4.1",
+        model="gpt-4.1-2025-04-14",
         messages=[
             {"role": "system", "content": system_prompt},
             {"role": "user",   "content": prompt_text}

@@ -18,4 +18,4 @@ Dieses Repository ermöglicht die dynamische Steuerung eines Roboters (UR3e) per
 - Öffne den Gripper
 - Lerne 4 neue Positionen
 - Fahre zu Position 2, öffne den Gripper, fahre zu Position 1, schließe den Gripper, fahren dann zu den Position 2, 3, 4 und öffne dann den Greifer und gehe dann zu den Positionen 3 und 2
-- Greife bitte das Werkstück, bringe es zum Förderband 2 und lasse es los. Aktiviere das Förderband bis das Werkstrück am Ende angekommen ist, deaktive das Förder band und dann Nehme das Werkstück von Position 3 und bringe es zum Endpunkt.
+- Greife bitte das Werkstück, bringe es zum Förderband 2 und lasse es los. Aktiviere das Förderband, bis das Werkstück am Ende angekommen ist, deaktiviere das Förderband und dann nehme das Werkstück von Position 3 und bringe es zum Endpunkt.
