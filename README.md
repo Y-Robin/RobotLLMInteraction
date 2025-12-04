@@ -1,6 +1,6 @@
 # RobotLLMInteraction
 Dieses Repository ermöglicht die dynamische Steuerung eines Roboters (UR3e) per Sprachbefehl. Nutzer können über Sprachsteuerung flexibel und intuitiv verschiedene Befehle an den Roboter übermitteln, um dessen Verhalten in Echtzeit zu steuern.
-Die GUI kann mithilfe von llmRobot_withSys_GUI.py gestartet werden. Das Systemprompt kann über die demo2.txt angepasst werden.
+Die GUI kann mithilfe von llmRobot_withSys_GUI.py gestartet werden. Das Systemprompt kann über die demo2.txt angepasst werden. Es wird ein API-Key für Open-AI benötigt welcher in .env gespeichert werden muss.
 
 # Python Version
 - Python 3.11.9
